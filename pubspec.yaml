@@ -1,0 +1,24 @@
+name: sinder
+description: A new Flutter project
+
+environment:
+  sdk: '^3.7.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_card_swiper: ^7.0.2
+  url_launcher: ^6.1.5
+  http: ^0.13.6
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/songs.json
+    - assets/tinder_to_sinder.jpg
+
