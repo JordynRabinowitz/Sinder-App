@@ -6,7 +6,6 @@ import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import 'package:sinder/generate_songs.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/link.dart';
-
 import 'package:http/http.dart' as http;
 
 import 'song.dart';
@@ -16,12 +15,19 @@ import 'urlLauncher.dart';
 // Declare accessToken globally
 String? accessToken;
 
-// Spotify access token logic
+// Caches for album covers and artist genres
+Map<String, String> albumCoverUrls = {};
+Map<String, List<String>> artistGenresCache = {};
+
 Future<void> _getAccessToken() async {
   if (accessToken != null) return;
+  //jordynjr ids
+  // const clientId = '92662ff7b8984515bc8861d2f805648c';
+  // const clientSecret = '97e447110bf1458ab1beb40ba420f4c3';
 
-  const clientId = '92662ff7b8984515bc8861d2f805648c';
-  const clientSecret = '97e447110bf1458ab1beb40ba420f4c3';
+  //jora8609 ids
+  const clientId = '0076e155b3ed4ae59b1fa975dbb9ca62';
+  const clientSecret = 'ac4b0062c8e4406faa4573f75a76addb';
 
   final authResponse = await http.post(
     Uri.parse('https://accounts.spotify.com/api/token'),
@@ -46,10 +52,7 @@ void main() {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-  // @override
-  // Widget build(BuildContext context) {
-  //   return MaterialApp(home: SongSwiperScreen());
-  // }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -61,7 +64,6 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-  
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -74,7 +76,6 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // Wait for 5 seconds before navigating to the main screen
     Future.delayed(const Duration(seconds: 5), () {
       Navigator.pushReplacement(
         context,
@@ -87,12 +88,11 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: Image.asset('assets/tinder_to_sinder.jpg'), // Your splash image here
+        child: Image.asset('assets/tinder_to_sinder.jpg'),
       ),
     );
   }
 }
-
 
 class SongSwiperScreen extends StatefulWidget {
   @override
@@ -102,7 +102,6 @@ class SongSwiperScreen extends StatefulWidget {
 class _SongSwiperScreenState extends State<SongSwiperScreen> {
   List<Song> songs = [];
   List<Song> likedSongs = [];
-  Map<String, String> albumCoverUrls = {};
   Future<void>? _launched;
 
   @override
@@ -124,30 +123,35 @@ class _SongSwiperScreenState extends State<SongSwiperScreen> {
     return uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
   }
 
-  Future<String?> fetchArtistId(String artistName) async {
-    await _getAccessToken();
-    final url = Uri.parse('https://api.spotify.com/v1/search?q=$artistName&type=artist&limit=1');
-
+  Future<String?> fetchArtistIdFromTrackId(String trackId) async {
+    await _getAccessToken(); // Ensure you have a valid access token
+    final url = Uri.parse('https://api.spotify.com/v1/tracks/$trackId');
     final response = await http.get(
       url,
-      headers: {
-        'Authorization': 'Bearer $accessToken',
-      },
+      headers: {'Authorization': 'Bearer $accessToken'},
     );
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      if (data['artists']['items'].isNotEmpty &&
-          data['artists']['items'][0]['id'] != null) {
-        return data['artists']['items'][0]['id'];
+      final artists = data['artists'] as List<dynamic>;
+      if (artists.isNotEmpty && artists[0]['id'] != null) {
+        return artists[0]['id'] as String;
       }
     }
 
-    return null;
+    return '0';
   }
 
   Future<List<String>> fetchArtistGenres(String artistId) async {
+    if (artistGenresCache.containsKey(artistId)) {
+      return artistGenresCache[artistId]!;
+    }
+
     await _getAccessToken();
+    if (artistId == '0') {
+      return ['no genres found'];
+    }
+
     final url = Uri.parse('https://api.spotify.com/v1/artists/$artistId');
     final response = await http.get(
       url,
@@ -156,7 +160,9 @@ class _SongSwiperScreenState extends State<SongSwiperScreen> {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return List<String>.from(data['genres']);
+      final genres = List<String>.from(data['genres']);
+      artistGenresCache[artistId] = genres;
+      return genres;
     } else {
       print('Failed to load artist genres for $artistId');
       return [];
@@ -169,7 +175,6 @@ class _SongSwiperScreenState extends State<SongSwiperScreen> {
     }
 
     await _getAccessToken();
-
     final trackResponse = await http.get(
       Uri.parse('https://api.spotify.com/v1/tracks/$trackId'),
       headers: {'Authorization': 'Bearer $accessToken'},
@@ -185,19 +190,15 @@ class _SongSwiperScreenState extends State<SongSwiperScreen> {
     }
   }
 
-
-Future<void> _launchSpotifyUrl(String url) async {
-  final Uri finalUrl = Uri.parse(url);
-  if (!await launchUrl(
-    finalUrl,
-    mode: LaunchMode.externalApplication,
-  )) {
-    throw Exception('Could not launch $finalUrl');
+  Future<void> _launchSpotifyUrl(String url) async {
+    final Uri finalUrl = Uri.parse(url);
+    if (!await launchUrl(
+      finalUrl,
+      mode: LaunchMode.externalApplication,
+    )) {
+      throw Exception('Could not launch $finalUrl');
+    }
   }
-}
-
-
-
 
   Future<bool> handleSwipe(int previousIndex, int? currentIndex, CardSwiperDirection direction) async {
     final swipedSong = songs[previousIndex];
@@ -208,10 +209,10 @@ Future<void> _launchSpotifyUrl(String url) async {
     if (direction == CardSwiperDirection.right) {
       likedSongs.add(swipedSong);
       Song? recommendedSong = recommendSimilarSong(swipedSong);
-     
 
       if (recommendedSong != null) {
         setState(() {
+          songs.removeWhere((song) => song.title == recommendedSong.title);
           songs.insert(previousIndex + 1, recommendedSong);
         });
 
@@ -284,61 +285,92 @@ Future<void> _launchSpotifyUrl(String url) async {
                 final song = songs[index];
                 final trackId = _extractTrackId(song.spotifyUrl);
 
-                return Center(
-                  child: SizedBox(
-                    width: MediaQuery.of(context).size.width * 0.85,
-                    height: MediaQuery.of(context).size.height * 0.75,
-                    child: Card(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      elevation: 6,
-                      child: SingleChildScrollView(
-                        child: Column(
-                          children: [
-                            AspectRatio(
-                              aspectRatio: 1,
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: FutureBuilder<String>(
-                                  future: fetchAlbumCover(trackId),
-                                  builder: (context, snapshot) {
-                                    if (snapshot.connectionState == ConnectionState.waiting) {
-                                      return const Center(child: CircularProgressIndicator());
-                                    } else if (snapshot.hasData) {
-                                      return Image.network(snapshot.data!, fit: BoxFit.cover);
-                                    } else {
-                                      return const Icon(Icons.music_note, size: 64);
-                                    }
-                                  },
+                return FutureBuilder<String?>( // Fetching artist ID
+                  future: fetchArtistIdFromTrackId(trackId),
+                  builder: (context, artistIdSnapshot) {
+                    if (artistIdSnapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    return FutureBuilder<List<String>>( // Fetching artist genres
+                      future: fetchArtistGenres(artistIdSnapshot.data!),
+                      builder: (context, genresSnapshot) {
+                        List<String> genres = genresSnapshot.data ?? [];
+
+                        return Center(
+                          child: SizedBox(
+                            width: MediaQuery.of(context).size.width * 0.85,
+                            height: MediaQuery.of(context).size.height * 0.75,
+                            child: Card(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              elevation: 6,
+                              child: SingleChildScrollView(
+                                child: Column(
+                                  children: [
+                                    AspectRatio(
+                                      aspectRatio: 1,
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: FutureBuilder<String>( // Fetching album cover
+                                          future: fetchAlbumCover(trackId),
+                                          builder: (context, snapshot) {
+                                            if (snapshot.connectionState == ConnectionState.waiting) {
+                                              return const Center(child: CircularProgressIndicator());
+                                            } else if (snapshot.hasData) {
+                                              return Image.network(snapshot.data!, fit: BoxFit.cover);
+                                            } else {
+                                              return const Icon(Icons.music_note, size: 64);
+                                            }
+                                          },
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(song.title, style: Theme.of(context).textTheme.titleLarge),
+                                    Text("Artist: ${song.artist}"),
+                                    Text("Year: ${song.releaseYear}"),
+                                    genres.isNotEmpty
+                                      ? Padding(
+                                          padding: const EdgeInsets.only(top: 4.0),
+                                          child: Text(
+                                            genres.join(', '),
+                                            style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+                                          ),
+                                        )
+                                      : const Padding(
+                                          padding: EdgeInsets.only(top: 4.0),
+                                          child: Text(
+                                            'No genre found',
+                                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                                          ),
+                                        ),
+                                    const SizedBox(height: 12),
+                                    ElevatedButton(
+                                      onPressed: () => setState(() {
+                                        _launched = _launchSpotifyUrl(song.spotifyUrl);
+                                      }),
+                                      child: const Text('Open on Spotify'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => SongDetailPage(trackId: trackId),
+                                          ),
+                                        );
+                                      },
+                                      child: const Text("See Details"),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 16),
-                            Text(song.title, style: Theme.of(context).textTheme.titleLarge),
-                            Text("Artist: ${song.artist}"),
-                            Text("Year: ${song.releaseYear}"),
-                            const SizedBox(height: 12),
-                            ElevatedButton(
-                              onPressed: () => setState(() {
-                              _launched =  _launchSpotifyUrl(song.spotifyUrl);
-                            }),
-                              child: const Text('Open on Spotify'),
-                            ),
-                            TextButton(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => SongDetailPage(trackId: trackId),
-                                  ),
-                                );
-                              },
-                              child: const Text("See Details"),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
+                          ),
+                        );
+                      },
+                    );
+                  },
                 );
               },
             ),
